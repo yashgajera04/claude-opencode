@@ -1,6 +1,6 @@
 {
   "name": "opencode-delegate-local",
-  "owner": { "name": "mitesh-dave" },
+  "owner": { "name": "yash-gajera (WLF)" },
   "plugins": [
     {
       "name": "opencode-delegate",
