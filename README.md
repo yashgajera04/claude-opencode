@@ -19,8 +19,9 @@ Install permanently:
 
 ## Use
 ```
-/delegate add a hello() function in hello.py with a pytest test
+/opencode-delegate:delegate add a hello() function in hello.py with a pytest test
 ```
+The tool Claude calls is `mcp__plugin_opencode-delegate_opencode-delegate__delegate`. To skip permission prompts, allow that name in your settings.
 
 ## Environment variables
 | Variable | Default | Meaning |
