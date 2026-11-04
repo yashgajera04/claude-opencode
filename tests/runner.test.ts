@@ -58,6 +58,8 @@ describe("runOpencode", () => {
     expect(r.message).toContain("ARG:--model");
     expect(r.message).toContain("ARG:prov/mod");
     expect(r.message).toContain("ARG:two words; $(rm -rf /)");
+    expect(r.message).toContain("ARG:--dir");
+    expect(r.message).toContain(`ARG:${here}`);
     expect(r.message).not.toContain("ARG:--auto");
     const r2 = await runOpencode({ ...base, auto: true });
     expect(r2.message).toContain("ARG:--auto");

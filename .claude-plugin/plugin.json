@@ -1,0 +1,7 @@
+{
+  "name": "opencode-delegate",
+  "version": "0.1.0",
+  "description": "Claude plans, OpenCode executes. Hands coding tasks to OpenCode and returns a ~700-token summary.",
+  "author": { "name": "mitesh-dave" },
+  "license": "MIT"
+}

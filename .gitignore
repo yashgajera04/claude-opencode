@@ -1,3 +1,6 @@
 node_modules/
 .superpowers/
 .vitest/
+.pytest_cache/
+__pycache__/
+.venv/

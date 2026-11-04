@@ -27,7 +27,9 @@ function appendBounded(buf: string, chunk: string): string {
 
 export function runOpencode(opts: RunOptions): Promise<RunResult> {
   const bin = opts.bin ?? "opencode";
-  const args = ["run"];
+  // OpenCode ignores the spawn cwd and works in the caller's directory unless told
+  // explicitly (found by a real e2e run), so always pass --dir.
+  const args = ["run", "--dir", opts.cwd];
   if (opts.model) args.push("--model", opts.model);
   if (opts.auto) args.push("--auto");
   args.push(opts.spec);
@@ -39,7 +41,10 @@ export function runOpencode(opts: RunOptions): Promise<RunResult> {
     let timedOut = false;
 
     // detached => own process group, so we can kill opencode's children too.
-    const child = spawn(bin, args, { cwd: opts.cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, {
+      cwd: opts.cwd,
+      env: { ...process.env, PWD: opts.cwd },
+      detached: true, stdio: ["ignore", "pipe", "pipe"] });
 
     const finish = (r: RunResult) => {
       if (settled) return;

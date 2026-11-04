@@ -1,0 +1,11 @@
+{
+  "name": "opencode-delegate-local",
+  "owner": { "name": "mitesh-dave" },
+  "plugins": [
+    {
+      "name": "opencode-delegate",
+      "source": "./",
+      "description": "Claude plans, OpenCode executes. Minimal Claude tokens per coding task."
+    }
+  ]
+}
