@@ -1,8 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { runOpencode } from "../src/runner.js";
+import { runOpencode, killAllRunning } from "../src/runner.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { chmodSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const marker = () => join(mkdtempSync(join(tmpdir(), "rn-")), "late-file");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE = join(here, "fixtures", "fake-opencode.sh");
@@ -63,5 +67,53 @@ describe("runOpencode", () => {
     expect(r.message).not.toContain("ARG:--auto");
     const r2 = await runOpencode({ ...base, auto: true });
     expect(r2.message).toContain("ARG:--auto");
+  });
+
+  it("puts -- before the spec so a spec starting with '- ' is not parsed as flags", async () => {
+    process.env.FAKE_MODE = "args";
+    const r = await runOpencode({ ...base, spec: "- Goal: add a thing" });
+    const lines = r.message.split("\n");
+    expect(lines.slice(-2)).toEqual(["ARG:--", "ARG:- Goal: add a thing"]);
+  });
+
+  it("reports ok promptly when opencode exits but a background child keeps the pipes open", async () => {
+    process.env.FAKE_MODE = "bg";
+    process.env.FAKE_FILE = marker();
+    const t = Date.now();
+    const r = await runOpencode({ ...base, timeoutS: 10 });
+    expect(r.status).toBe("ok");
+    expect(r.message).toContain("All done");
+    expect(Date.now() - t).toBeLessThan(2500);
+  });
+
+  it("kills leftover background processes after a normal exit", async () => {
+    process.env.FAKE_MODE = "bg";
+    const file = (process.env.FAKE_FILE = marker());
+    await runOpencode({ ...base, timeoutS: 10 });
+    await sleep(2800);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("returns cancelled and kills the child when the abort signal fires", async () => {
+    process.env.FAKE_MODE = "touch";
+    const file = (process.env.FAKE_FILE = marker());
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    const r = await runOpencode({ ...base, timeoutS: 10, signal: ac.signal });
+    expect(r.status).toBe("cancelled");
+    await sleep(2500);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("killAllRunning stops in-flight runs (used on server shutdown)", async () => {
+    process.env.FAKE_MODE = "touch";
+    const file = (process.env.FAKE_FILE = marker());
+    const p = runOpencode({ ...base, timeoutS: 10 });
+    await sleep(300);
+    killAllRunning();
+    const r = await p;
+    expect(r.status).toBe("cancelled");
+    await sleep(2500);
+    expect(existsSync(file)).toBe(false);
   });
 });

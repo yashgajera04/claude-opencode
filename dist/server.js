@@ -36656,7 +36656,7 @@ var StdioServerTransport = class {
 };
 
 // src/delegate.ts
-import { statSync } from "node:fs";
+import { statSync as statSync2 } from "node:fs";
 
 // src/cap.ts
 function capText(text, maxChars) {
@@ -36678,80 +36678,118 @@ function capText(text, maxChars) {
 function tailChars(text, n) {
   return text.length <= n ? text : text.slice(text.length - n);
 }
-var TEST_LINE = /(?=.*\d)(?=.*(pass|fail|error))/i;
+var COUNTED = /\b\d+\s+(passed|failed|failing|passing|skipped)\b|\b(passed|failed)\s*[:=]\s*\d+|^\s*Tests?:/i;
+var VERDICT = /^\s*(PASS|FAIL)\b/;
+var MAX_TEST_LINE = 200;
 function lastTestLine(text) {
   const lines = text.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
-    if (line && TEST_LINE.test(line)) return line;
+    if (line && (COUNTED.test(line) || VERDICT.test(line))) return line.slice(0, MAX_TEST_LINE);
   }
   return null;
 }
 
 // src/runner.ts
 import { spawn } from "node:child_process";
-var KEEP_BYTES = 64 * 1024;
+var KEEP_CHARS = 64 * 1024;
 var MESSAGE_CHARS = 1500;
+var DRAIN_MS = 300;
+var MAX_TIMER_S = 2e6;
+var running = /* @__PURE__ */ new Set();
+function killAllRunning() {
+  for (const cancel of [...running]) cancel();
+}
 function appendBounded(buf, chunk) {
   const next = buf + chunk;
-  return next.length > KEEP_BYTES ? next.slice(next.length - KEEP_BYTES) : next;
+  return next.length > KEEP_CHARS ? next.slice(next.length - KEEP_CHARS) : next;
 }
 function runOpencode(opts) {
   const bin = opts.bin ?? "opencode";
   const args = ["run", "--dir", opts.cwd];
   if (opts.model) args.push("--model", opts.model);
   if (opts.auto) args.push("--auto");
-  args.push(opts.spec);
+  args.push("--", opts.spec);
+  if (opts.signal?.aborted) {
+    return Promise.resolve({ status: "cancelled", message: "cancelled before start", stderrTail: "" });
+  }
   return new Promise((resolve) => {
     let out = "";
     let err = "";
     let settled = false;
-    let timedOut = false;
+    let exitCode;
+    let drainTimer;
     const child = spawn(bin, args, {
       cwd: opts.cwd,
       env: { ...process.env, PWD: opts.cwd },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    const finish = (r) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(r);
-    };
     const killGroup = (sig) => {
       try {
         if (child.pid) process.kill(-child.pid, sig);
       } catch {
       }
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const killTree = () => {
       killGroup("SIGTERM");
       setTimeout(() => killGroup("SIGKILL"), 2e3).unref();
-      finish({
-        status: "timeout",
-        message: `opencode timed out after ${opts.timeoutS}s`,
-        stderrTail: tailChars(err, 600)
-      });
-    }, opts.timeoutS * 1e3);
-    child.stdout.on("data", (d) => out = appendBounded(out, d.toString()));
-    child.stderr.on("data", (d) => err = appendBounded(err, d.toString()));
+    };
+    const finish = (r, kill) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(drainTimer);
+      running.delete(cancel);
+      opts.signal?.removeEventListener("abort", cancel);
+      if (kill) killTree();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve(r);
+    };
+    const cancel = () => {
+      finish({ status: "cancelled", message: "cancelled", stderrTail: tailChars(err.trim(), 600) }, true);
+    };
+    running.add(cancel);
+    opts.signal?.addEventListener("abort", cancel, { once: true });
+    const timer = setTimeout(() => {
+      finish(
+        {
+          status: "timeout",
+          message: capText(out.trim(), MESSAGE_CHARS) || `opencode timed out after ${opts.timeoutS}s`,
+          stderrTail: tailChars(err.trim(), 600)
+        },
+        true
+      );
+    }, Math.min(opts.timeoutS, MAX_TIMER_S) * 1e3);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d) => out = appendBounded(out, d));
+    child.stderr.on("data", (d) => err = appendBounded(err, d));
     child.on("error", (e) => {
-      finish({
-        status: "error",
-        message: e.code === "ENOENT" ? "opencode binary not found. Install opencode (https://opencode.ai) and make sure it is on PATH." : `failed to start opencode: ${e.message}`,
-        stderrTail: ""
-      });
+      finish(
+        {
+          status: "error",
+          message: e.code === "ENOENT" ? "opencode binary not found. Install opencode (https://opencode.ai) and make sure it is on PATH." : `failed to start opencode: ${e.message}`,
+          stderrTail: ""
+        },
+        false
+      );
     });
-    child.on("close", (code) => {
-      if (timedOut) return;
-      const message = capText(out.trim(), MESSAGE_CHARS);
-      finish({
-        status: code === 0 ? "ok" : "failed",
-        message,
+    const complete = () => finish(
+      {
+        status: exitCode === 0 ? "ok" : "failed",
+        message: capText(out.trim(), MESSAGE_CHARS),
         stderrTail: tailChars(err.trim(), 600)
-      });
+      },
+      true
+    );
+    child.on("exit", (code) => {
+      exitCode = code;
+      drainTimer = setTimeout(complete, DRAIN_MS);
+    });
+    child.on("close", () => {
+      if (exitCode !== void 0) complete();
     });
   });
 }
@@ -36759,65 +36797,88 @@ function runOpencode(opts) {
 // src/gitSummary.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 var run = promisify(execFile);
 var MAX_CHARS = 800;
 async function git(cwd, args) {
   const { stdout } = await run("git", args, { cwd, maxBuffer: 16 * 1024 * 1024 });
   return stdout;
 }
-async function diffStat(cwd) {
+function signature(root, xy, path) {
   try {
-    await git(cwd, ["rev-parse", "--is-inside-work-tree"]);
+    const s = statSync(join(root, path));
+    return `${xy}|${s.size}|${s.mtimeMs}`;
   } catch {
-    return "(not a git repo)";
+    return `${xy}|gone`;
   }
+}
+async function snapshot(cwd) {
+  let root;
   try {
-    const stat = (await git(cwd, ["diff", "--stat", "HEAD"])).trim();
-    const untracked = (await git(cwd, ["ls-files", "--others", "--exclude-standard"])).trim();
-    const parts = [];
-    if (stat) parts.push(stat);
-    if (untracked) parts.push("untracked:\n" + untracked);
-    if (parts.length === 0) return "(no changes)";
-    return capText(parts.join("\n"), MAX_CHARS);
-  } catch (e) {
-    try {
-      const s = (await git(cwd, ["status", "--short"])).trim();
-      return s ? capText(s, MAX_CHARS) : "(no changes)";
-    } catch {
-      return "(git summary unavailable)";
-    }
+    root = (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  } catch {
+    return null;
   }
+  const files = /* @__PURE__ */ new Map();
+  try {
+    const entries = (await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"])).split("\0");
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (e.length < 4) continue;
+      const xy = e.slice(0, 2);
+      const path = e.slice(3);
+      if (xy.includes("R") || xy.includes("C")) i++;
+      files.set(path, signature(root, xy, path));
+    }
+  } catch {
+  }
+  return { root, files };
+}
+async function changesSince(before, cwd) {
+  if (before === null) return "(not a git repo)";
+  const after = await snapshot(cwd);
+  if (after === null) return "(git summary unavailable)";
+  const lines = [];
+  for (const [path, sig] of after.files) {
+    if (before.files.get(path) !== sig) lines.push(`${sig.split("|")[0].trim() || "?"} ${path}`);
+  }
+  if (lines.length === 0) return "(no changes)";
+  return capText(lines.join("\n"), MAX_CHARS);
 }
 
 // src/delegate.ts
 var MAX_SPEC_CHARS = 8e3;
 var MAX_RESULT_CHARS = 2800;
-var SUMMARY_CHARS = 1500;
-async function delegate(args, env = process.env) {
+var SUMMARY_CHARS = 1200;
+var STDERR_CHARS = 400;
+var BLOCKED = /reject|denied|permission/i;
+async function delegate(args, env = process.env, signal) {
   const spec = args.spec?.trim() ?? "";
   if (spec.length === 0) throw new Error("spec must not be empty");
   if (spec.length > MAX_SPEC_CHARS) throw new Error(`spec is too long (${spec.length} > ${MAX_SPEC_CHARS} chars)`);
   let isDir = false;
   try {
-    isDir = statSync(args.cwd).isDirectory();
+    isDir = statSync2(args.cwd).isDirectory();
   } catch {
   }
-  if (!isDir) throw new Error(`cwd does not exist or is not a directory: ${args.cwd}`);
+  if (!isDir) throw new Error(`cwd does not exist or is not a directory: ${capText(args.cwd, 200)}`);
   const timeoutS = Number(env.OPENCODE_DELEGATE_TIMEOUT_S) > 0 ? Number(env.OPENCODE_DELEGATE_TIMEOUT_S) : 600;
+  const before = await snapshot(args.cwd);
   const run2 = await runOpencode({
     spec,
     cwd: args.cwd,
     model: env.OPENCODE_DELEGATE_MODEL || void 0,
     timeoutS,
     bin: env.OPENCODE_DELEGATE_BIN || void 0,
-    auto: env.OPENCODE_DELEGATE_AUTO === "1"
+    auto: env.OPENCODE_DELEGATE_AUTO === "1",
+    signal
   });
   let summary = capText(run2.message, SUMMARY_CHARS);
-  if ((run2.status === "failed" || run2.status === "timeout") && run2.stderrTail) {
-    summary += `
-stderr: ${run2.stderrTail}`;
+  if (run2.stderrTail && (run2.status !== "ok" || run2.message === "" || BLOCKED.test(run2.stderrTail))) {
+    summary += `${summary ? "\n" : ""}stderr: ${capText(run2.stderrTail, STDERR_CHARS)}`;
   }
-  const changes = run2.status === "error" ? "(not run)" : await diffStat(args.cwd);
+  const changes = run2.status === "error" ? "(not run)" : await changesSince(before, args.cwd);
   const tests = lastTestLine(run2.message) ?? "(none reported)";
   const out = `STATUS: ${run2.status}
 SUMMARY: ${summary}
@@ -36837,9 +36898,9 @@ server.registerTool(
       cwd: external_exports.string().describe("Absolute path of the project directory to work in")
     }
   },
-  async ({ spec, cwd }) => {
+  async ({ spec, cwd }, extra) => {
     try {
-      const text = await delegate({ spec, cwd }, process.env);
+      const text = await delegate({ spec, cwd }, process.env, extra.signal);
       return { content: [{ type: "text", text }] };
     } catch (e) {
       return { content: [{ type: "text", text: `STATUS: error
@@ -36847,4 +36908,11 @@ SUMMARY: ${e.message}` }], isError: true };
     }
   }
 );
+var shutdown = () => {
+  killAllRunning();
+  setTimeout(() => process.exit(0), 100).unref();
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+process.stdin.on("end", shutdown);
 await server.connect(new StdioServerTransport());

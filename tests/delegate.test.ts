@@ -62,6 +62,30 @@ describe("delegate", () => {
     expect(out).toMatch(/^TESTS: 3 passed, 0 failed$/m);
   });
 
+  it("keeps all four sections within 2800 chars for a noisy failed run", async () => {
+    process.env.FAKE_MODE = "failbig";
+    const out = await delegate({ spec: "do it", cwd: here }, env("failbig"));
+    expect(out.length).toBeLessThanOrEqual(2800);
+    for (const label of ["STATUS:", "SUMMARY:", "CHANGES:", "TESTS:"]) {
+      expect(out).toMatch(new RegExp(`^${label}`, "m"));
+    }
+    expect(out).toMatch(/^STATUS: failed$/m);
+  });
+
+  it("shows stderr when opencode exits 0 with an empty message (blocked permission)", async () => {
+    process.env.FAKE_MODE = "silent";
+    const out = await delegate({ spec: "do it", cwd: here }, env("silent"));
+    expect(out).toContain("auto-rejecting");
+  });
+
+  it("returns STATUS: cancelled when the abort signal fires", async () => {
+    process.env.FAKE_MODE = "sleep";
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    const out = await delegate({ spec: "do it", cwd: here }, env("sleep"), ac.signal);
+    expect(out).toMatch(/^STATUS: cancelled$/m);
+  });
+
   it("reports a missing binary as STATUS: error with an install hint", async () => {
     const e = { ...env("ok"), OPENCODE_DELEGATE_BIN: "/nonexistent/oc-xyz" };
     const out = await delegate({ spec: "do it", cwd: here }, e);

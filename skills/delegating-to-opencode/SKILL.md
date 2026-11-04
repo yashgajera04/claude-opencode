@@ -8,7 +8,7 @@ description: Use when the user asks for a coding task (implement, fix, refactor,
 You are the planner. OpenCode is the executor. Spend as few tokens as you can.
 
 1. Brainstorm briefly with the user. Ask only what blocks the spec.
-2. Write a spec of at most 300 words: **goal**, **files** (paths if known), **constraints**, **acceptance command** (a test or command that proves it works).
+2. Write a spec of at most 300 words: **goal**, **files** (paths if known), **constraints**, **acceptance command** (a test or command that proves it works). End the spec with: "Run the acceptance command and put its exact summary line (for example `3 passed in 0.1s`) as the last line of your reply."
 3. Call the `delegate` tool (`mcp__plugin_opencode-delegate_opencode-delegate__delegate`) once with `spec` and `cwd` (absolute project path).
 4. Do NOT read, grep or edit project files yourself. Do NOT ask OpenCode for logs or full diffs.
 5. Judge the result only from `STATUS`, `CHANGES` and `TESTS`.

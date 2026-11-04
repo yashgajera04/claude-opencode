@@ -28,6 +28,30 @@ describe("lastTestLine", () => {
   it("returns null when nothing matches", () => {
     expect(lastTestLine("nothing here\nat all")).toBeNull();
   });
+
+  it.each([
+    "I added 2 files and the import error is resolved.",
+    "Created 3 files, no errors",
+    "Set the password minimum length to 12",
+    "Added a bypass for 2 legacy routes",
+    "Moved TypeError handling to line 40",
+  ])("ignores ordinary prose: %s", (prose) => {
+    expect(lastTestLine(`pytest: 2 failed, 1 passed\n${prose}`)).toBe("pytest: 2 failed, 1 passed");
+  });
+
+  it.each([
+    "Tests: 5 passed, 5 total",
+    "===== 1 failed, 4 passed in 0.12s =====",
+    "ok 12 passed",
+    "FAIL tests/foo.test.ts",
+  ])("recognises real test summary: %s", (line) => {
+    expect(lastTestLine(`x\n${line}\n`)).toBe(line);
+  });
+
+  it("limits the returned line to 200 chars", () => {
+    const long = "3 passed " + "z".repeat(1000);
+    expect(lastTestLine(long)!.length).toBeLessThanOrEqual(200);
+  });
 });
 
 describe("tailChars", () => {

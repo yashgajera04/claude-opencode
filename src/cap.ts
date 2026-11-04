@@ -17,14 +17,18 @@ export function tailChars(text: string, n: number): string {
   return text.length <= n ? text : text.slice(text.length - n);
 }
 
-const TEST_LINE = /(?=.*\d)(?=.*(pass|fail|error))/i;
+// Counted results ("3 passed", "passed: 3", "Tests: ...") are test output; bare
+// words like "error" or a stray digit in prose are not.
+const COUNTED = /\b\d+\s+(passed|failed|failing|passing|skipped)\b|\b(passed|failed)\s*[:=]\s*\d+|^\s*Tests?:/i;
+const VERDICT = /^\s*(PASS|FAIL)\b/; // case-sensitive: jest/vitest style "FAIL path"
+const MAX_TEST_LINE = 200;
 
-/** Last line that looks like a test summary: contains a digit and pass/fail/error. */
+/** Last line that looks like a test summary, at most 200 chars. */
 export function lastTestLine(text: string): string | null {
   const lines = text.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim();
-    if (line && TEST_LINE.test(line)) return line;
+    if (line && (COUNTED.test(line) || VERDICT.test(line))) return line.slice(0, MAX_TEST_LINE);
   }
   return null;
 }
