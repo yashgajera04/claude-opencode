@@ -1,6 +1,6 @@
 {
   "name": "opencode-delegate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Claude plans, OpenCode executes. Hands coding tasks to OpenCode and returns a ~700-token summary.",
   "author": { "name": "yash-gajera (WLF)" },
   "license": "MIT"
