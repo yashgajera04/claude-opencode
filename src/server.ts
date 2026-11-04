@@ -5,14 +5,14 @@ import { z } from "zod";
 import { delegate, MAX_SPEC_CHARS } from "./delegate.js";
 import { killAllRunning } from "./runner.js";
 
-const server = new McpServer({ name: "opencode-delegate", version: "0.1.0" });
+const server = new McpServer({ name: "opencode-delegate", version: "0.1.2" });
 
 server.registerTool(
   "delegate",
   {
     description:
       "Hand a coding task to OpenCode, which reads, edits and tests the code. " +
-      "Returns only STATUS, SUMMARY, CHANGES (git diff --stat) and TESTS, capped at ~700 tokens. " +
+      "Returns only STATUS, SUMMARY, CHANGES (files changed during the run) and TESTS, capped at ~700 tokens. " +
       "Write the spec as: goal, files, constraints, and an acceptance command.",
     inputSchema: {
       spec: z.string().min(1).max(MAX_SPEC_CHARS).describe("Compact task spec for OpenCode"),

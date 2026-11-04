@@ -4,17 +4,21 @@ Claude Code plugin. Claude brainstorms and writes a compact spec. OpenCode does 
 
 ## Requirements
 - Node 20+
-- `opencode` on your PATH, with a model configured
+- [OpenCode](https://opencode.ai) installed, with a model configured. Check with `opencode run "say ok"`.
+- Mac, Linux or Windows (see [Windows](#windows) for one limitation)
 
 ## Install
-Try without installing:
-```bash
-claude --plugin-dir /path/to/claude-opencode-delegate
+In Claude Code:
 ```
-Install permanently:
-```
-/plugin marketplace add /path/to/claude-opencode-delegate
+/plugin marketplace add yashgajera04/claude-opencode
 /plugin install opencode-delegate@opencode-delegate-local
+```
+Then restart Claude Code.
+
+## Update
+New releases bump the plugin version. To get them:
+```
+/plugin marketplace update opencode-delegate-local
 ```
 
 ## Use
@@ -33,6 +37,10 @@ The tool Claude calls is `mcp__plugin_opencode-delegate_opencode-delegate__deleg
 | `OPENCODE_DELEGATE_TIMEOUT_S` | `600` | Kill OpenCode after this many seconds |
 | `OPENCODE_DELEGATE_AUTO` | off | `1` passes `--auto` (auto-approves permissions; dangerous) |
 | `OPENCODE_DELEGATE_BIN` | `opencode` | Path to the opencode binary |
+
+## Windows
+- The npm install of OpenCode only puts an `opencode.cmd` shim on PATH. The plugin never runs the spec through `cmd.exe`, because that would allow command injection. It finds the real `opencode.exe` instead: on PATH, or behind the npm shim. If it still reports "opencode binary not found", set `OPENCODE_DELEGATE_BIN` to the full path of `opencode.exe`.
+- Timeout, cancel and closing Claude Code kill OpenCode and everything it started. One limitation: if OpenCode finishes normally but leaves a background process running (a dev server, a watcher), that process is not stopped on Windows. Mac and Linux stop it.
 
 ## Develop
 ```bash

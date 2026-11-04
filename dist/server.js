@@ -12898,8 +12898,8 @@ function emoji() {
 }
 var ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
 var ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
-var mac = (delimiter) => {
-  const escapedDelim = escapeRegex(delimiter ?? ":");
+var mac = (delimiter2) => {
+  const escapedDelim = escapeRegex(delimiter2 ?? ":");
   return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
 };
 var cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
@@ -36692,6 +36692,8 @@ function lastTestLine(text) {
 
 // src/runner.ts
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 var KEEP_CHARS = 64 * 1024;
 var MESSAGE_CHARS = 1500;
 var DRAIN_MS = 300;
@@ -36700,16 +36702,34 @@ var running = /* @__PURE__ */ new Set();
 function killAllRunning() {
   for (const cancel of [...running]) cancel();
 }
+var IS_WIN = process.platform === "win32";
+function resolveBin(bin, env = process.env, isWin = IS_WIN) {
+  if (!isWin || /[\\/]/.test(bin) || /\.[a-z0-9]+$/i.test(bin)) return bin;
+  const dirs = (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const exe = join(dir, `${bin}.exe`);
+    if (existsSync(exe)) return exe;
+    if (bin === "opencode" && existsSync(join(dir, "opencode.cmd"))) {
+      const npmExe = join(dir, "node_modules", "opencode-ai", "bin", "opencode.exe");
+      if (existsSync(npmExe)) return npmExe;
+    }
+  }
+  return bin;
+}
 function appendBounded(buf, chunk) {
   const next = buf + chunk;
   return next.length > KEEP_CHARS ? next.slice(next.length - KEEP_CHARS) : next;
 }
 function runOpencode(opts) {
-  const bin = opts.bin ?? "opencode";
+  let bin = resolveBin(opts.bin ?? "opencode");
   const args = ["run", "--dir", opts.cwd];
   if (opts.model) args.push("--model", opts.model);
   if (opts.auto) args.push("--auto");
   args.push("--", opts.spec);
+  if (/\.[cm]?js$/i.test(bin)) {
+    args.unshift(bin);
+    bin = process.execPath;
+  }
   if (opts.signal?.aborted) {
     return Promise.resolve({ status: "cancelled", message: "cancelled before start", stderrTail: "" });
   }
@@ -36722,7 +36742,8 @@ function runOpencode(opts) {
     const child = spawn(bin, args, {
       cwd: opts.cwd,
       env: { ...process.env, PWD: opts.cwd },
-      detached: true,
+      detached: !IS_WIN,
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
     const killGroup = (sig) => {
@@ -36732,6 +36753,16 @@ function runOpencode(opts) {
       }
     };
     const killTree = () => {
+      if (IS_WIN) {
+        if (child.pid) {
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on(
+            "error",
+            () => {
+            }
+          );
+        }
+        return;
+      }
       killGroup("SIGTERM");
       setTimeout(() => killGroup("SIGKILL"), 2e3).unref();
     };
@@ -36770,7 +36801,7 @@ function runOpencode(opts) {
       finish(
         {
           status: "error",
-          message: e.code === "ENOENT" ? "opencode binary not found. Install opencode (https://opencode.ai) and make sure it is on PATH." : `failed to start opencode: ${e.message}`,
+          message: e.code === "ENOENT" ? "opencode binary not found. Install opencode (https://opencode.ai) and make sure it is on PATH" + (IS_WIN ? ", or set OPENCODE_DELEGATE_BIN to the full path of opencode.exe." : ".") : `failed to start opencode: ${e.message}`,
           stderrTail: ""
         },
         false
@@ -36798,7 +36829,7 @@ function runOpencode(opts) {
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var run = promisify(execFile);
 var MAX_CHARS = 800;
 async function git(cwd, args) {
@@ -36807,7 +36838,7 @@ async function git(cwd, args) {
 }
 function signature(root, xy, path) {
   try {
-    const s = statSync(join(root, path));
+    const s = statSync(join2(root, path));
     return `${xy}|${s.size}|${s.mtimeMs}`;
   } catch {
     return `${xy}|gone`;
@@ -36888,11 +36919,11 @@ TESTS: ${tests}`;
 }
 
 // src/server.ts
-var server = new McpServer({ name: "opencode-delegate", version: "0.1.0" });
+var server = new McpServer({ name: "opencode-delegate", version: "0.1.2" });
 server.registerTool(
   "delegate",
   {
-    description: "Hand a coding task to OpenCode, which reads, edits and tests the code. Returns only STATUS, SUMMARY, CHANGES (git diff --stat) and TESTS, capped at ~700 tokens. Write the spec as: goal, files, constraints, and an acceptance command.",
+    description: "Hand a coding task to OpenCode, which reads, edits and tests the code. Returns only STATUS, SUMMARY, CHANGES (files changed during the run) and TESTS, capped at ~700 tokens. Write the spec as: goal, files, constraints, and an acceptance command.",
     inputSchema: {
       spec: external_exports.string().min(1).max(MAX_SPEC_CHARS).describe("Compact task spec for OpenCode"),
       cwd: external_exports.string().describe("Absolute path of the project directory to work in")

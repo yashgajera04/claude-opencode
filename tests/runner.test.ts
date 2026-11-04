@@ -1,16 +1,15 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { runOpencode, killAllRunning } from "../src/runner.js";
+import { runOpencode, killAllRunning, resolveBin } from "../src/runner.js";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { chmodSync, existsSync, mkdtempSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const marker = () => join(mkdtempSync(join(tmpdir(), "rn-")), "late-file");
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FAKE = join(here, "fixtures", "fake-opencode.sh");
-chmodSync(FAKE, 0o755);
+const FAKE = join(here, "fixtures", "fake-opencode.mjs");
 
 const base = { spec: "do the thing", cwd: here, timeoutS: 5, bin: FAKE };
 
@@ -86,7 +85,9 @@ describe("runOpencode", () => {
     expect(Date.now() - t).toBeLessThan(2500);
   });
 
-  it("kills leftover background processes after a normal exit", async () => {
+  // Windows has no process groups: taskkill /T cannot find children whose parent
+  // already exited. Documented in the README.
+  it.skipIf(process.platform === "win32")("kills leftover background processes after a normal exit", async () => {
     process.env.FAKE_MODE = "bg";
     const file = (process.env.FAKE_FILE = marker());
     await runOpencode({ ...base, timeoutS: 10 });
@@ -115,5 +116,26 @@ describe("runOpencode", () => {
     expect(r.status).toBe("cancelled");
     await sleep(2500);
     expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe("resolveBin", () => {
+  it("leaves the name alone off Windows", () => {
+    expect(resolveBin("opencode", { PATH: "/x" }, false)).toBe("opencode");
+  });
+
+  it("leaves explicit paths and names with an extension alone on Windows", () => {
+    expect(resolveBin("C:\tools\opencode.exe", {}, true)).toBe("C:\tools\opencode.exe");
+    expect(resolveBin("fake.mjs", {}, true)).toBe("fake.mjs");
+  });
+
+  it("finds the real opencode.exe behind npm's opencode.cmd shim on Windows", () => {
+    const npmDir = mkdtempSync(join(tmpdir(), "npm-"));
+    const exeDir = join(npmDir, "node_modules", "opencode-ai", "bin");
+    mkdirSync(exeDir, { recursive: true });
+    writeFileSync(join(npmDir, "opencode.cmd"), "");
+    writeFileSync(join(exeDir, "opencode.exe"), "");
+    const PATH = ["/does/not/exist", npmDir].join(delimiter);
+    expect(resolveBin("opencode", { PATH }, true)).toBe(join(exeDir, "opencode.exe"));
   });
 });

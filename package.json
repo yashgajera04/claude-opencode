@@ -1,6 +1,6 @@
 {
   "name": "opencode-delegate",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Claude Code plugin: Claude plans, OpenCode executes, minimal tokens come back.",
   "type": "module",
   "main": "dist/server.js",

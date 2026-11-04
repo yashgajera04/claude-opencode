@@ -2,11 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { delegate } from "../src/delegate.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { chmodSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FAKE = join(here, "fixtures", "fake-opencode.sh");
-chmodSync(FAKE, 0o755);
+const FAKE = join(here, "fixtures", "fake-opencode.mjs");
 
 const env = (mode: string): NodeJS.ProcessEnv => ({
   ...process.env,
